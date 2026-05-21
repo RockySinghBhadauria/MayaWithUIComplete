@@ -179,6 +179,59 @@ class SQLParser(BaseParser):
         officers_skipped = 0
         fiscal_year_seen = None
 
+        # SCT tables frequently split a multi-line "Name and Principal Position" cell
+        # into separate rows. e.g. Blink Charging Co.'s L3 file:
+        #     row 1: "Michael C. Battaglia(1)"          (real name + comp for FY2025)
+        #     row 2: "President and Chief Executive"    (title line + comp for FY2024)
+        #     row 3: "Officer"                          (title line + comp for FY2023)
+        # All 3 rows belong to the SAME person. Rows 2-3 are title fragments AND
+        # additional fiscal-year compensation rows.
+        #
+        # Strategy: walk rows in order, carry forward the last seen real name and
+        # accumulate title fragments. When a fragment row is hit, attribute its
+        # money to the last real name and append its text to the designation.
+
+        _TITLE_RE = re.compile(
+            r'^\s*('
+            r'president|vice\s*president|svp|evp|chief|officer|executive|'
+            r'former|interim|director|chairman|chair|secretary|treasurer|'
+            r'general\s*counsel|operating|financial|operations|technology|'
+            r'commercial|strategy|legal|administrative|principal|managing|'
+            r'senior|head\s+of|controller|cfo|ceo|coo|cto|cmo|cio|chro|'
+            r'co\s*-?\s*founder|founder|board|member|'
+            r'and\b|of\b|the\b|&|/|-|\s)+\s*$', re.I)
+
+        def _is_title_fragment(s):
+            if not s:
+                return False
+            stripped = re.sub(r'\([^\)]*\)', '', s).strip()
+            return bool(_TITLE_RE.match(stripped))
+
+        # Pass 1: derive each officer block's full designation text by walking
+        # the rows in order. Map real_name -> joined designation.
+        block_designation = {}
+        _cur_name = None
+        _cur_title = []
+        for _, row in df.iterrows():
+            nm = str(row.get(name_col, '')).strip() if name_col else ''
+            if not nm or len(nm) < 3:
+                continue
+            low = nm.lower()
+            if any(s in low for s in
+                   ['total', 'name and', 'principal position', '---', 'salary', 'compensation']):
+                continue
+            if _is_title_fragment(nm):
+                if _cur_name:
+                    _cur_title.append(nm)
+                    block_designation[_cur_name] = ' '.join(_cur_title).strip()
+            else:
+                _cur_name = nm
+                _cur_title = []
+                block_designation.setdefault(_cur_name, '')
+
+        # Pass 2: insert rows. Title-fragment rows get rewritten to use the real
+        # owner's name + the block's accumulated designation.
+        last_real_name = None
         for _, row in df.iterrows():
             officer_name = str(row.get(name_col, '')).strip() if name_col else ''
             if not officer_name or len(officer_name) < 3:
@@ -187,6 +240,13 @@ class SQLParser(BaseParser):
             if any(skip in lower_name for skip in
                    ['total', 'name and', 'principal position', '---', 'salary', 'compensation']):
                 continue
+            if _is_title_fragment(officer_name):
+                if not last_real_name:
+                    self.logger.debug("  [TITLE-LEAD] '%s' has no preceding officer — skipped", officer_name)
+                    continue
+                officer_name = last_real_name
+            else:
+                last_real_name = officer_name
 
             # Fiscal year
             fy = None
@@ -218,7 +278,13 @@ class SQLParser(BaseParser):
             if salary == 0 and bonus == 0 and stock == 0 and total == 0:
                 continue  # junk row
 
+            # Designation priority:
+            #   1. an explicit designation column on the same row (rare in real SCT tables)
+            #   2. block_designation from pass-1 multi-line title accumulation
+            #   3. empty (SP will write '' / SC_Tag stays unset)
             designation = str(row.get(desig_col, '')).strip() if desig_col else ''
+            if not designation:
+                designation = block_designation.get(officer_name, '').strip()
             scope = "{} FY{} {}".format(company_name, fy, officer_name)
 
             # --- SP 1: sp_wk_SummaryComp_IU_MAYA (18 params) ---
