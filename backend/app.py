@@ -458,17 +458,29 @@ def _top_n_sql(n):
 
 
 @app.get("/api/module-output/{module}")
-def get_module_output(module: str):
+def get_module_output(module: str, date: Optional[str] = None):
     """View parsed output for a module (sct, equity, exercise, pba, dct).
+
+    Only shows rows from the CURRENT run (i.e. companies whose Maya_Parsing_Summary
+    Parsed_Date matches `date` — defaults to today). Pass `?date=YYYY-MM-DD` to
+    view a previous run.
 
     Columns returned match the production SP writes 1:1 so the UI tables look exactly
     like the click app (Officer.aspx, OutstandingEquityAwards.aspx, PBA.aspx, etc.).
     """
     db = get_db()
     top_prefix, limit_suffix = _top_n_sql(500)
+    # Build a (Company_ID, FiscalYear) filter set for the chosen run.
+    # Using INNER JOIN against Maya_Parsing_Summary restricted by Parsed_Date guarantees
+    # we only show what THIS run produced — no historical 2018-2024 noise.
+    if date:
+        date_filter_sql = "CAST(m.Parsed_Date AS DATE) = ?"
+        date_params = [date]
+    else:
+        date_filter_sql = "CAST(m.Parsed_Date AS DATE) = CAST(GETDATE() AS DATE)"
+        date_params = []
     try:
         if module == "sct":
-            # Production wk_SummaryComp columns (no Designation — that's TagName / Footnote in this schema)
             data = db.fetch_all(
                 "SELECT " + top_prefix +
                 "w.Officer_ID, w.OfficerName, w.ParsedName, w.FiscalYear, "
@@ -477,10 +489,13 @@ def get_module_output(module: str):
                 "w.Chg_Retention_Plan_Value, w.All_Other, w.Total, "
                 "w.TagName, w.Footnote, "
                 "c.CompanyName, m.Link as FilingURL, m.Parsed_Date, m.SCT_Parsed "
-                "FROM wk_SummaryComp w "
+                "FROM Maya_Parsing_Summary m "
+                "INNER JOIN wk_SummaryComp w "
+                "  ON w.Company_ID = m.Company_ID AND w.FiscalYear = m.FiscalYear "
                 "LEFT JOIN Company c ON w.Company_ID = c.Company_ID "
-                "LEFT JOIN Maya_Parsing_Summary m ON w.Company_ID = m.Company_ID AND w.FiscalYear = m.FiscalYear "
-                "ORDER BY c.CompanyName, w.FiscalYear DESC" + limit_suffix
+                "WHERE " + date_filter_sql + " "
+                "ORDER BY c.CompanyName, w.FiscalYear DESC" + limit_suffix,
+                date_params
             )
             companies = {}
             for r in data:
@@ -501,13 +516,10 @@ def get_module_output(module: str):
                 "grouped": list(companies.values()),
                 "total": len(data),
                 "companies_count": len(companies),
+                "filter": "current_run" if not date else "date=" + date,
             }
         elif module == "equity":
-            # Production Officer_Outstanding_Equity has 1M+ rows; filter to the last 2 fiscal
-            # years and sort by FiscalYear DESC so the FY index is usable. Without the WHERE the
-            # query takes 30+ seconds and the React axios client (30s timeout) errors out.
-            max_fy_row = db.fetch_one("SELECT MAX(FiscalYear) AS m FROM Officer_Outstanding_Equity")
-            max_fy = (max_fy_row or {}).get("m") or 2025
+            # Driven by today's Maya_Parsing_Summary entries — avoids scanning 1M historical rows.
             data = db.fetch_all(
                 "SELECT " + top_prefix +
                 "oe.Officer_Outstanding_Equity_ID, oe.Officer_ID, "
@@ -517,58 +529,44 @@ def get_module_output(module: str):
                 "o.OfficerName, o.Company_ID, c.CompanyName, "
                 "m.Link as FilingURL, m.Parsed_Date, "
                 "m.Outstanding_Equity_Parsed as Status "
-                "FROM Officer_Outstanding_Equity oe "
-                "LEFT JOIN Officer o ON oe.Officer_ID = o.Officer_ID "
-                "LEFT JOIN Company c ON o.Company_ID = c.Company_ID "
-                "LEFT JOIN Maya_Parsing_Summary m ON o.Company_ID = m.Company_ID AND oe.FiscalYear = m.FiscalYear "
-                "WHERE oe.FiscalYear >= ? "
-                "ORDER BY oe.FiscalYear DESC, c.CompanyName" + limit_suffix,
-                [max_fy - 1]
+                "FROM Maya_Parsing_Summary m "
+                "INNER JOIN Officer o "
+                "  ON o.Company_ID = m.Company_ID AND o.FiscalYear = m.FiscalYear "
+                "INNER JOIN Officer_Outstanding_Equity oe "
+                "  ON oe.Officer_ID = o.Officer_ID AND oe.FiscalYear = m.FiscalYear "
+                "LEFT JOIN Company c ON m.Company_ID = c.Company_ID "
+                "WHERE " + date_filter_sql + " "
+                "ORDER BY c.CompanyName, oe.FiscalYear DESC" + limit_suffix,
+                date_params
             )
             grouped = _group_by_company(data, "Outstanding_Equity_Parsed")
             return {"module": "Equity — Outstanding Equity Awards (Officer_Outstanding_Equity)",
                     "records": data, "grouped": grouped,
-                    "total": len(data), "companies_count": len(grouped)}
+                    "total": len(data), "companies_count": len(grouped),
+                    "filter": "current_run" if not date else "date=" + date}
         elif module == "exercise":
-            # 383k Officer rows. Two-stage query for perf: first narrow Officer to last 2 FY
-            # + non-null exercise cols via CTE, then JOIN Company / Maya_Parsing_Summary
-            # only on the small result set. Cuts wall-time from 23s → ~1s.
-            max_fy_row = db.fetch_one(
-                "SELECT MAX(FiscalYear) AS m FROM Officer "
-                "WHERE Option_Shares_Acquired IS NOT NULL OR Stock_Shares_Acquired IS NOT NULL"
-            )
-            max_fy = (max_fy_row or {}).get("m") or 2025
             data = db.fetch_all(
-                "WITH oexec AS ("
-                "  SELECT " + top_prefix +
-                "  Officer_ID, OfficerName, FiscalYear, Company_ID, "
-                "  Option_Shares_Acquired, Option_Value_Realized, "
-                "  Stock_Shares_Acquired, Stock_Value_Realized "
-                "  FROM Officer "
-                "  WHERE FiscalYear >= ? "
-                "    AND (Option_Shares_Acquired IS NOT NULL OR Stock_Shares_Acquired IS NOT NULL) "
-                "  ORDER BY FiscalYear DESC, Officer_ID "
-                ") "
-                "SELECT o.Officer_ID, o.OfficerName, o.FiscalYear, "
+                "SELECT " + top_prefix +
+                "o.Officer_ID, o.OfficerName, o.FiscalYear, "
                 "o.Option_Shares_Acquired, o.Option_Value_Realized, "
                 "o.Stock_Shares_Acquired, o.Stock_Value_Realized, "
                 "c.CompanyName, o.Company_ID, "
                 "m.Link as FilingURL, m.Parsed_Date, m.Vested_Parsed as Status "
-                "FROM oexec o "
+                "FROM Maya_Parsing_Summary m "
+                "INNER JOIN Officer o "
+                "  ON o.Company_ID = m.Company_ID AND o.FiscalYear = m.FiscalYear "
                 "LEFT JOIN Company c ON o.Company_ID = c.Company_ID "
-                "LEFT JOIN Maya_Parsing_Summary m ON o.Company_ID = m.Company_ID AND o.FiscalYear = m.FiscalYear "
-                "ORDER BY o.FiscalYear DESC, c.CompanyName",
-                [max_fy - 1]
+                "WHERE " + date_filter_sql + " "
+                "  AND (o.Option_Shares_Acquired IS NOT NULL OR o.Stock_Shares_Acquired IS NOT NULL) "
+                "ORDER BY c.CompanyName, o.FiscalYear DESC" + limit_suffix,
+                date_params
             )
             grouped = _group_by_company(data, "Vested_Parsed")
             return {"module": "Exercise — Option Exercises & Stock Vested (Officer)",
                     "records": data, "grouped": grouped,
-                    "total": len(data), "companies_count": len(grouped)}
+                    "total": len(data), "companies_count": len(grouped),
+                    "filter": "current_run" if not date else "date=" + date}
         elif module == "pba":
-            # 414k Officer_Awards rows; scope to last 2 fiscal years for UI responsiveness.
-            # Award_Category enum: 1=NonEquity, 2=Equity, 3=Option, 4=AllOtherStock, 5=AllOtherOptions
-            max_fy_row = db.fetch_one("SELECT MAX(FiscalYear) AS m FROM Officer_Awards")
-            max_fy = (max_fy_row or {}).get("m") or 2025
             data = db.fetch_all(
                 "SELECT " + top_prefix +
                 "oa.Officer_Awards_ID, oa.Officer_ID, oa.FiscalYear, "
@@ -578,20 +576,22 @@ def get_module_output(module: str):
                 "oa.Grant_Date_Fair_Value, "
                 "o.OfficerName, o.Company_ID, c.CompanyName, "
                 "m.Link as FilingURL, m.Parsed_Date, m.PBA_Parsed as Status "
-                "FROM Officer_Awards oa "
-                "LEFT JOIN Officer o ON oa.Officer_ID = o.Officer_ID "
-                "LEFT JOIN Company c ON o.Company_ID = c.Company_ID "
-                "LEFT JOIN Maya_Parsing_Summary m ON o.Company_ID = m.Company_ID AND oa.FiscalYear = m.FiscalYear "
-                "WHERE oa.FiscalYear >= ? "
-                "ORDER BY oa.FiscalYear DESC, c.CompanyName" + limit_suffix,
-                [max_fy - 1]
+                "FROM Maya_Parsing_Summary m "
+                "INNER JOIN Officer o "
+                "  ON o.Company_ID = m.Company_ID AND o.FiscalYear = m.FiscalYear "
+                "INNER JOIN Officer_Awards oa "
+                "  ON oa.Officer_ID = o.Officer_ID AND oa.FiscalYear = m.FiscalYear "
+                "LEFT JOIN Company c ON m.Company_ID = c.Company_ID "
+                "WHERE " + date_filter_sql + " "
+                "ORDER BY c.CompanyName, oa.FiscalYear DESC" + limit_suffix,
+                date_params
             )
             grouped = _group_by_company(data, "PBA_Parsed")
             return {"module": "PBA — Grants of Plan-Based Awards (Officer_Awards)",
                     "records": data, "grouped": grouped,
-                    "total": len(data), "companies_count": len(grouped)}
+                    "total": len(data), "companies_count": len(grouped),
+                    "filter": "current_run" if not date else "date=" + date}
         elif module == "dct":
-            # Production BOD_DirectorComp — column is AllOtherCompensation (not AllotherComp)
             try:
                 data = db.fetch_all(
                     "SELECT " + top_prefix +
@@ -600,17 +600,21 @@ def get_module_output(module: str):
                     "bdc.OptionAwards, bdc.AllOtherCompensation as AllotherComp, "
                     "bdc.NonEquityIncentivePlanCompensation as NonEquity, "
                     "bdc.ChangeinPensionValue as PensionChange, bdc.Total, "
-                    "c.CompanyName, mb.Link as FilingURL, mb.Parsed_Date, "
-                    "mb.DCT_Parsed as Status "
-                    "FROM BOD_DirectorComp bdc "
+                    "c.CompanyName, m.Link as FilingURL, m.Parsed_Date, "
+                    "m.DCT_Parsed as Status "
+                    "FROM Maya_Parsing_Summary m "
+                    "INNER JOIN BOD_DirectorComp bdc "
+                    "  ON bdc.Company_ID = m.Company_ID AND bdc.FiscalYear = m.FiscalYear "
                     "LEFT JOIN Company c ON bdc.Company_ID = c.Company_ID "
-                    "LEFT JOIN Maya_Parsing_Summary mb ON bdc.Company_ID = mb.Company_ID AND bdc.FiscalYear = mb.FiscalYear "
-                    "ORDER BY c.CompanyName, bdc.FiscalYear DESC" + limit_suffix
+                    "WHERE " + date_filter_sql + " "
+                    "ORDER BY c.CompanyName, bdc.FiscalYear DESC" + limit_suffix,
+                    date_params
                 )
                 grouped = _group_by_company(data, "DCT_Parsed")
                 return {"module": "DCT — Director Compensation Table (BOD_DirectorComp)",
                         "records": data, "grouped": grouped,
-                        "total": len(data), "companies_count": len(grouped)}
+                        "total": len(data), "companies_count": len(grouped),
+                        "filter": "current_run" if not date else "date=" + date}
             except Exception as e:
                 logger.warning("DCT module-output failed: %s", e)
                 return {"module": "DCT — Director Compensation Table",
