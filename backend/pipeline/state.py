@@ -81,24 +81,27 @@ class PipelineState(object):
 
     def get_recent_runs(self, limit=10):
         """Get recent pipeline runs grouped by run_group."""
-        return self.db.fetch_all(
-            """SELECT run_group, run_date,
-                      COUNT(*) as total_steps,
-                      SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) as completed,
-                      SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) as failed,
-                      SUM(CASE WHEN status='running' THEN 1 ELSE 0 END) as running,
-                      MIN(started_at) as started,
-                      MAX(completed_at) as finished
-               FROM Pipeline_Runs
-               GROUP BY run_group
-               ORDER BY MAX(id) DESC
-               LIMIT ?""",
-            [limit]
-        )
+        # Use SQL Server TOP syntax for compatibility (LIMIT isn't supported)
+        try:
+            n = int(limit)
+        except Exception:
+            n = 10
+        sql = (
+            "SELECT TOP {} run_group, run_date,"
+            " COUNT(*) as total_steps,"
+            " SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) as completed,"
+            " SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) as failed,"
+            " SUM(CASE WHEN status='running' THEN 1 ELSE 0 END) as running,"
+            " MIN(started_at) as started,"
+            " MAX(completed_at) as finished"
+            " FROM Pipeline_Runs"
+            " GROUP BY run_group, run_date"
+            " ORDER BY MAX(id) DESC"
+        ).format(n)
+        return self.db.fetch_all(sql)
 
     def get_latest_run_group(self):
         """Get the most recent run_group."""
-        row = self.db.fetch_one(
-            "SELECT run_group FROM Pipeline_Runs ORDER BY id DESC LIMIT 1"
-        )
+        # SQL Server: use TOP 1 instead of LIMIT
+        row = self.db.fetch_one("SELECT TOP 1 run_group FROM Pipeline_Runs ORDER BY id DESC")
         return row['run_group'] if row else None

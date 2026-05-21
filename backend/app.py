@@ -468,13 +468,14 @@ def get_module_output(module: str):
     top_prefix, limit_suffix = _top_n_sql(500)
     try:
         if module == "sct":
-            # Matches sp_wk_SummaryComp_IU_MAYA target columns (production sql_parser.py)
+            # Production wk_SummaryComp columns (no Designation — that's TagName / Footnote in this schema)
             data = db.fetch_all(
                 "SELECT " + top_prefix +
-                "w.Officer_ID, w.OfficerName, w.FiscalYear, w.Salary, w.Bonus, "
-                "w.Stock_Award, w.Option_Awards, w.Non_Eq_Incentive_Plan_Comp, "
-                "w.Chg_PensionValue_NQDC_Earnings, w.Chg_Retention_Plan_Value, "
-                "w.All_Other, w.Total, w.Designation, w.TagName, "
+                "w.Officer_ID, w.OfficerName, w.ParsedName, w.FiscalYear, "
+                "w.Salary, w.Bonus, w.Stock_Award, w.Option_Awards, "
+                "w.Non_Eq_Incentive_Plan_Comp, w.Chg_PensionValue_NQDC_Earnings, "
+                "w.Chg_Retention_Plan_Value, w.All_Other, w.Total, "
+                "w.TagName, w.Footnote, "
                 "c.CompanyName, m.Link as FilingURL, m.Parsed_Date, m.SCT_Parsed "
                 "FROM wk_SummaryComp w "
                 "LEFT JOIN Company c ON w.Company_ID = c.Company_ID "
@@ -502,20 +503,23 @@ def get_module_output(module: str):
                 "companies_count": len(companies),
             }
         elif module == "equity":
-            # Matches sp_Outstanding_Equity_Awards_IU_MAYA target columns
+            # Production Officer_Outstanding_Equity — NO Company_ID column on the table itself;
+            # join through Officer to get Company. Real cols: Number_Securities, Market_Value,
+            # FYE_Value, OSE_Tag (no No_OEA_In_Proxy or Outstanding_Modification — those are on
+            # Company_FiscalYear, not here).
             data = db.fetch_all(
                 "SELECT " + top_prefix +
-                "oe.Officer_Outstanding_Equity_ID, oe.Officer_ID, oe.Company_ID, "
+                "oe.Officer_Outstanding_Equity_ID, oe.Officer_ID, "
                 "oe.FiscalYear, oe.Equity_Type, oe.Grant_Date, "
-                "oe.Number_Securities_Exercisable_Options, oe.Exercise_Price, "
-                "oe.Expiration_Date, oe.Tracking_Stock_Ticker, oe.No_OEA_In_Proxy, "
-                "oe.Outstanding_Modification, o.OfficerName, c.CompanyName, "
+                "oe.Number_Securities, oe.Exercise_Price, oe.Expiration_Date, "
+                "oe.Market_Value, oe.FYE_Value, oe.Tracking_Stock_Ticker, oe.OSE_Tag, "
+                "o.OfficerName, o.Company_ID, c.CompanyName, "
                 "m.Link as FilingURL, m.Parsed_Date, "
                 "m.Outstanding_Equity_Parsed as Status "
                 "FROM Officer_Outstanding_Equity oe "
                 "LEFT JOIN Officer o ON oe.Officer_ID = o.Officer_ID "
-                "LEFT JOIN Company c ON oe.Company_ID = c.Company_ID "
-                "LEFT JOIN Maya_Parsing_Summary m ON oe.Company_ID = m.Company_ID AND oe.FiscalYear = m.FiscalYear "
+                "LEFT JOIN Company c ON o.Company_ID = c.Company_ID "
+                "LEFT JOIN Maya_Parsing_Summary m ON o.Company_ID = m.Company_ID AND oe.FiscalYear = m.FiscalYear "
                 "ORDER BY c.CompanyName, oe.FiscalYear DESC" + limit_suffix
             )
             grouped = _group_by_company(data, "Outstanding_Equity_Parsed")
@@ -543,22 +547,23 @@ def get_module_output(module: str):
                     "records": data, "grouped": grouped,
                     "total": len(data), "companies_count": len(grouped)}
         elif module == "pba":
-            # Matches sp_wk_PlanBasedAward_U_MAYA target columns
+            # Production Officer_Awards — flat Threshold/Target/Maximum (NOT split per category);
+            # Award_Category enum (1=NonEquity, 2=Equity, 3=Option, 4=AllOtherStock, 5=AllOtherOptions)
+            # tells you which type the row's threshold/target/maximum applies to.
+            # No Company_ID on the table — join via Officer.
             data = db.fetch_all(
                 "SELECT " + top_prefix +
-                "oa.Officer_Awards_ID, oa.Officer_ID, oa.Company_ID, oa.FiscalYear, "
-                "oa.Award_Category, oa.GrantDate, oa.ActionDate, "
-                "oa.NonEquity_Threshold, oa.NonEquity_Target, oa.NonEquity_Maximum, "
-                "oa.Equity_Threshold, oa.Equity_Target, oa.Equity_Maximum, "
-                "oa.Option_Threshold, oa.Option_Target, oa.Option_Maximum, "
-                "oa.AllOther_Stock, oa.AllOther_Options, oa.Base_Price, "
-                "oa.GrantDate_Price, oa.GDFV_Stock_Option, "
-                "o.OfficerName, c.CompanyName, "
+                "oa.Officer_Awards_ID, oa.Officer_ID, oa.FiscalYear, "
+                "oa.Award_Category, oa.Grant_Date, oa.Action_Date, "
+                "oa.Threshold, oa.Target, oa.Maximum, "
+                "oa.Number_Securities, oa.Exercise_Price, oa.Stock_Price, "
+                "oa.Grant_Date_Fair_Value, "
+                "o.OfficerName, o.Company_ID, c.CompanyName, "
                 "m.Link as FilingURL, m.Parsed_Date, m.PBA_Parsed as Status "
                 "FROM Officer_Awards oa "
                 "LEFT JOIN Officer o ON oa.Officer_ID = o.Officer_ID "
-                "LEFT JOIN Company c ON oa.Company_ID = c.Company_ID "
-                "LEFT JOIN Maya_Parsing_Summary m ON oa.Company_ID = m.Company_ID AND oa.FiscalYear = m.FiscalYear "
+                "LEFT JOIN Company c ON o.Company_ID = c.Company_ID "
+                "LEFT JOIN Maya_Parsing_Summary m ON o.Company_ID = m.Company_ID AND oa.FiscalYear = m.FiscalYear "
                 "ORDER BY c.CompanyName, oa.FiscalYear DESC" + limit_suffix
             )
             grouped = _group_by_company(data, "PBA_Parsed")
@@ -566,18 +571,20 @@ def get_module_output(module: str):
                     "records": data, "grouped": grouped,
                     "total": len(data), "companies_count": len(grouped)}
         elif module == "dct":
-            # Matches sp_GenerateDirector_MAYA writes — Director + BOD_DirectorComp.
+            # Production BOD_DirectorComp — column is AllOtherCompensation (not AllotherComp)
             try:
                 data = db.fetch_all(
                     "SELECT " + top_prefix +
-                    "bdc.Director_ID, bdc.Name as Director_Name, bdc.Company_Id as Company_ID, "
-                    "bdc.FiscalYear, bdc.FeesEarnedorPaid, bdc.stockawards as StockAwards, "
-                    "bdc.OptionAwards, bdc.allothercompensation as AllotherComp, bdc.total as Total, "
+                    "bdc.Director_ID, bdc.Name as Director_Name, bdc.Company_ID, "
+                    "bdc.FiscalYear, bdc.FeesEarnedorPaid, bdc.StockAwards, "
+                    "bdc.OptionAwards, bdc.AllOtherCompensation as AllotherComp, "
+                    "bdc.NonEquityIncentivePlanCompensation as NonEquity, "
+                    "bdc.ChangeinPensionValue as PensionChange, bdc.Total, "
                     "c.CompanyName, mb.Link as FilingURL, mb.Parsed_Date, "
                     "mb.DCT_Parsed as Status "
                     "FROM BOD_DirectorComp bdc "
-                    "LEFT JOIN Company c ON bdc.Company_Id = c.Company_ID "
-                    "LEFT JOIN Maya_Parsing_Summary mb ON bdc.Company_Id = mb.Company_ID AND bdc.FiscalYear = mb.FiscalYear "
+                    "LEFT JOIN Company c ON bdc.Company_ID = c.Company_ID "
+                    "LEFT JOIN Maya_Parsing_Summary mb ON bdc.Company_ID = mb.Company_ID AND bdc.FiscalYear = mb.FiscalYear "
                     "ORDER BY c.CompanyName, bdc.FiscalYear DESC" + limit_suffix
                 )
                 grouped = _group_by_company(data, "DCT_Parsed")
