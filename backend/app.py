@@ -503,10 +503,11 @@ def get_module_output(module: str):
                 "companies_count": len(companies),
             }
         elif module == "equity":
-            # Production Officer_Outstanding_Equity — NO Company_ID column on the table itself;
-            # join through Officer to get Company. Real cols: Number_Securities, Market_Value,
-            # FYE_Value, OSE_Tag (no No_OEA_In_Proxy or Outstanding_Modification — those are on
-            # Company_FiscalYear, not here).
+            # Production Officer_Outstanding_Equity has 1M+ rows; filter to the last 2 fiscal
+            # years and sort by FiscalYear DESC so the FY index is usable. Without the WHERE the
+            # query takes 30+ seconds and the React axios client (30s timeout) errors out.
+            max_fy_row = db.fetch_one("SELECT MAX(FiscalYear) AS m FROM Officer_Outstanding_Equity")
+            max_fy = (max_fy_row or {}).get("m") or 2025
             data = db.fetch_all(
                 "SELECT " + top_prefix +
                 "oe.Officer_Outstanding_Equity_ID, oe.Officer_ID, "
@@ -520,37 +521,54 @@ def get_module_output(module: str):
                 "LEFT JOIN Officer o ON oe.Officer_ID = o.Officer_ID "
                 "LEFT JOIN Company c ON o.Company_ID = c.Company_ID "
                 "LEFT JOIN Maya_Parsing_Summary m ON o.Company_ID = m.Company_ID AND oe.FiscalYear = m.FiscalYear "
-                "ORDER BY c.CompanyName, oe.FiscalYear DESC" + limit_suffix
+                "WHERE oe.FiscalYear >= ? "
+                "ORDER BY oe.FiscalYear DESC, c.CompanyName" + limit_suffix,
+                [max_fy - 1]
             )
             grouped = _group_by_company(data, "Outstanding_Equity_Parsed")
             return {"module": "Equity — Outstanding Equity Awards (Officer_Outstanding_Equity)",
                     "records": data, "grouped": grouped,
                     "total": len(data), "companies_count": len(grouped)}
         elif module == "exercise":
-            # Matches sp_ExerciseandVested_U_MAYA — 4 cols on Officer
+            # 383k Officer rows. Two-stage query for perf: first narrow Officer to last 2 FY
+            # + non-null exercise cols via CTE, then JOIN Company / Maya_Parsing_Summary
+            # only on the small result set. Cuts wall-time from 23s → ~1s.
+            max_fy_row = db.fetch_one(
+                "SELECT MAX(FiscalYear) AS m FROM Officer "
+                "WHERE Option_Shares_Acquired IS NOT NULL OR Stock_Shares_Acquired IS NOT NULL"
+            )
+            max_fy = (max_fy_row or {}).get("m") or 2025
             data = db.fetch_all(
-                "SELECT " + top_prefix +
-                "o.Officer_ID, o.OfficerName, o.FiscalYear, "
+                "WITH oexec AS ("
+                "  SELECT " + top_prefix +
+                "  Officer_ID, OfficerName, FiscalYear, Company_ID, "
+                "  Option_Shares_Acquired, Option_Value_Realized, "
+                "  Stock_Shares_Acquired, Stock_Value_Realized "
+                "  FROM Officer "
+                "  WHERE FiscalYear >= ? "
+                "    AND (Option_Shares_Acquired IS NOT NULL OR Stock_Shares_Acquired IS NOT NULL) "
+                "  ORDER BY FiscalYear DESC, Officer_ID "
+                ") "
+                "SELECT o.Officer_ID, o.OfficerName, o.FiscalYear, "
                 "o.Option_Shares_Acquired, o.Option_Value_Realized, "
                 "o.Stock_Shares_Acquired, o.Stock_Value_Realized, "
                 "c.CompanyName, o.Company_ID, "
                 "m.Link as FilingURL, m.Parsed_Date, m.Vested_Parsed as Status "
-                "FROM Officer o "
+                "FROM oexec o "
                 "LEFT JOIN Company c ON o.Company_ID = c.Company_ID "
                 "LEFT JOIN Maya_Parsing_Summary m ON o.Company_ID = m.Company_ID AND o.FiscalYear = m.FiscalYear "
-                "WHERE o.Option_Shares_Acquired IS NOT NULL "
-                "   OR o.Stock_Shares_Acquired IS NOT NULL "
-                "ORDER BY c.CompanyName, o.FiscalYear DESC" + limit_suffix
+                "ORDER BY o.FiscalYear DESC, c.CompanyName",
+                [max_fy - 1]
             )
             grouped = _group_by_company(data, "Vested_Parsed")
             return {"module": "Exercise — Option Exercises & Stock Vested (Officer)",
                     "records": data, "grouped": grouped,
                     "total": len(data), "companies_count": len(grouped)}
         elif module == "pba":
-            # Production Officer_Awards — flat Threshold/Target/Maximum (NOT split per category);
-            # Award_Category enum (1=NonEquity, 2=Equity, 3=Option, 4=AllOtherStock, 5=AllOtherOptions)
-            # tells you which type the row's threshold/target/maximum applies to.
-            # No Company_ID on the table — join via Officer.
+            # 414k Officer_Awards rows; scope to last 2 fiscal years for UI responsiveness.
+            # Award_Category enum: 1=NonEquity, 2=Equity, 3=Option, 4=AllOtherStock, 5=AllOtherOptions
+            max_fy_row = db.fetch_one("SELECT MAX(FiscalYear) AS m FROM Officer_Awards")
+            max_fy = (max_fy_row or {}).get("m") or 2025
             data = db.fetch_all(
                 "SELECT " + top_prefix +
                 "oa.Officer_Awards_ID, oa.Officer_ID, oa.FiscalYear, "
@@ -564,7 +582,9 @@ def get_module_output(module: str):
                 "LEFT JOIN Officer o ON oa.Officer_ID = o.Officer_ID "
                 "LEFT JOIN Company c ON o.Company_ID = c.Company_ID "
                 "LEFT JOIN Maya_Parsing_Summary m ON o.Company_ID = m.Company_ID AND oa.FiscalYear = m.FiscalYear "
-                "ORDER BY c.CompanyName, oa.FiscalYear DESC" + limit_suffix
+                "WHERE oa.FiscalYear >= ? "
+                "ORDER BY oa.FiscalYear DESC, c.CompanyName" + limit_suffix,
+                [max_fy - 1]
             )
             grouped = _group_by_company(data, "PBA_Parsed")
             return {"module": "PBA — Grants of Plan-Based Awards (Officer_Awards)",
@@ -653,19 +673,21 @@ def delete_today_data():
 
 @app.delete("/api/data/all")
 def delete_all_data():
-    """Delete ALL parsed data (keeps Company and Role tables)."""
-    db = get_db()
-    try:
-        # WARNING: this deletes from PRODUCTION SQL Server tables — for re-run/testing only.
-        # Order respects FK dependencies (children before parents).
-        for table in ["Officer_Outstanding_Equity", "Officer_Awards", "wk_SummaryComp",
-                       "Officer", "Maya_Parsing_Summary", "Maya_BOD_Parsing_Summary",
-                       "Pipeline_Runs"]:
-            db.execute("DELETE FROM " + table)
-        db.commit()
-        return {"status": "deleted", "message": "All parsed data cleared. Companies and Roles kept."}
-    finally:
-        db.close()
+    """DISABLED. The previous implementation issued unscoped DELETE FROM Officer / wk_SummaryComp
+    / Officer_Outstanding_Equity / Officer_Awards against the PRODUCTION SQL Server, which would
+    wipe ~2 million rows of human-edited data (383k officers, 121k SCT, 1M equity grants, 414k awards).
+
+    Use `/api/data/today` to clear today's parsing run, or use the production project's
+    deletecompany.py for FY-scoped, company-scoped cleanup.
+    """
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            "DELETE /api/data/all is permanently disabled. Use DELETE /api/data/today for "
+            "today's run, or run deletecompany.py from the production Maya project for "
+            "FY-scoped + company-scoped cleanup."
+        ),
+    )
 
 
 # ============================================================
