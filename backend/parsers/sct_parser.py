@@ -286,11 +286,17 @@ class SCTParser(BaseParser):
                 tracker_df.at[row_idx, 'SCT_fetched'] = 0
                 self.logger.error("  Error processing %s: %s", company_name, e)
 
-        # Save tracker CSV (with resolved URLs for equity/exercise/pba)
+        # Save tracker CSV (with resolved URLs for equity/exercise/pba).
+        # Ensure parent dirs exist — when the metadata folder for this month
+        # was just created by RSS in the same run, pandas can race against
+        # the filesystem and fail with "non-existent directory".
+        os.makedirs(os.path.dirname(parsed_path), exist_ok=True)
         tracker_df.to_csv(parsed_path, index=True)
 
         # Also update the feed file with resolved URLs
-        feed_df.to_csv(edgar_feed_path(), index=False)
+        feed_out = edgar_feed_path()
+        os.makedirs(os.path.dirname(feed_out), exist_ok=True)
+        feed_df.to_csv(feed_out, index=False)
 
         self.logger.info("SCT complete: processed=%d parsed=%d no_table=%d",
                          companies_processed, parsed_count, no_table_count)

@@ -124,12 +124,18 @@ def module_parsed_path(module_prefix, today_date=None):
 def backup_if_exists(filepath):
     """If *filepath* exists, rename it with a timestamp to prevent overwrite.
 
+    Also ensures the parent directory exists for the caller's upcoming write
+    (saves callers from having to add os.makedirs themselves).
+
     Args:
         filepath: Path to check.
 
     Returns:
         The new backup path if a rename occurred, otherwise None.
     """
+    parent = os.path.dirname(filepath)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     if os.path.exists(filepath):
         ts = datetime.now().strftime('%Y%m%d-%H%M%S')
         base, ext = os.path.splitext(filepath)
