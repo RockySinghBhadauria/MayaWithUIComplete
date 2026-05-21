@@ -303,10 +303,14 @@ def pipeline_run(body: PipelineRunRequest):
         # Reset stop flag
         import builtins
         builtins._maya_stop_pipeline = False
-        # Re-setup logging in thread to ensure buffer handler works
-        from core.logging_config import setup_logging
+        # Start a fresh per-run log folder (logs/<year>/runs/<timestamp>/)
+        from core.logging_config import start_new_run, setup_logging
+        run_id = start_new_run()
         setup_logging()
         tlog = get_logger('pipeline.thread')
+        tlog.info("=" * 70)
+        tlog.info("PIPELINE RUN START — run_id=%s", run_id)
+        tlog.info("=" * 70)
         db = get_db()
         try:
             init_database(db)
@@ -481,18 +485,27 @@ def get_module_output(module: str, date: Optional[str] = None):
         date_params = []
     try:
         if module == "sct":
+            # Designation comes from the parser's @TagName param, stored in
+            # wk_SummaryComp.TagName (the SP cascades it into Officer.SC_Tag).
+            # NOTE: Officer.Company_Title is HUMAN-edited via the click app —
+            # NOT what the parser wrote — so we expose SC_Tag too for cross-check.
             data = db.fetch_all(
                 "SELECT " + top_prefix +
                 "w.Officer_ID, w.OfficerName, w.ParsedName, w.FiscalYear, "
                 "w.Salary, w.Bonus, w.Stock_Award, w.Option_Awards, "
                 "w.Non_Eq_Incentive_Plan_Comp, w.Chg_PensionValue_NQDC_Earnings, "
                 "w.Chg_Retention_Plan_Value, w.All_Other, w.Total, "
-                "w.TagName, w.Footnote, "
+                "w.TagName AS Designation, w.Footnote, "
+                "CAST(o.SC_Tag AS NVARCHAR(500)) AS Officer_SC_Tag, "
+                "CAST(o.Company_Title AS NVARCHAR(500)) AS Officer_Company_Title, "
                 "c.CompanyName, m.Link as FilingURL, m.Parsed_Date, m.SCT_Parsed "
                 "FROM Maya_Parsing_Summary m "
                 "INNER JOIN wk_SummaryComp w "
                 "  ON w.Company_ID = m.Company_ID AND w.FiscalYear = m.FiscalYear "
                 "LEFT JOIN Company c ON w.Company_ID = c.Company_ID "
+                "LEFT JOIN Officer o "
+                "  ON o.Company_ID = w.Company_ID AND o.FiscalYear = w.FiscalYear "
+                " AND LTRIM(RTRIM(o.OfficerName)) = LTRIM(RTRIM(w.OfficerName)) "
                 "WHERE " + date_filter_sql + " "
                 "ORDER BY c.CompanyName, w.FiscalYear DESC" + limit_suffix,
                 date_params
@@ -526,7 +539,8 @@ def get_module_output(module: str, date: Optional[str] = None):
                 "oe.FiscalYear, oe.Equity_Type, oe.Grant_Date, "
                 "oe.Number_Securities, oe.Exercise_Price, oe.Expiration_Date, "
                 "oe.Market_Value, oe.FYE_Value, oe.Tracking_Stock_Ticker, oe.OSE_Tag, "
-                "o.OfficerName, o.Company_ID, c.CompanyName, "
+                "o.OfficerName, CAST(COALESCE(o.SC_Tag, o.Company_Title) AS NVARCHAR(500)) AS Designation, "
+                "o.Company_ID, c.CompanyName, "
                 "m.Link as FilingURL, m.Parsed_Date, "
                 "m.Outstanding_Equity_Parsed as Status "
                 "FROM Maya_Parsing_Summary m "
@@ -547,7 +561,9 @@ def get_module_output(module: str, date: Optional[str] = None):
         elif module == "exercise":
             data = db.fetch_all(
                 "SELECT " + top_prefix +
-                "o.Officer_ID, o.OfficerName, o.FiscalYear, "
+                "o.Officer_ID, o.OfficerName, "
+                "CAST(COALESCE(o.SC_Tag, o.Company_Title) AS NVARCHAR(500)) AS Designation, "
+                "o.FiscalYear, "
                 "o.Option_Shares_Acquired, o.Option_Value_Realized, "
                 "o.Stock_Shares_Acquired, o.Stock_Value_Realized, "
                 "c.CompanyName, o.Company_ID, "
@@ -574,7 +590,8 @@ def get_module_output(module: str, date: Optional[str] = None):
                 "oa.Threshold, oa.Target, oa.Maximum, "
                 "oa.Number_Securities, oa.Exercise_Price, oa.Stock_Price, "
                 "oa.Grant_Date_Fair_Value, "
-                "o.OfficerName, o.Company_ID, c.CompanyName, "
+                "o.OfficerName, CAST(COALESCE(o.SC_Tag, o.Company_Title) AS NVARCHAR(500)) AS Designation, "
+                "o.Company_ID, c.CompanyName, "
                 "m.Link as FilingURL, m.Parsed_Date, m.PBA_Parsed as Status "
                 "FROM Maya_Parsing_Summary m "
                 "INNER JOIN Officer o "

@@ -246,7 +246,8 @@ function Dashboard() {
                       <div style={{ overflowX: 'auto' }}>
                         <table style={{ fontSize: 12, width: '100%' }}>
                           <thead><tr style={{ background: '#f8fafc' }}>
-                            <th style={{ padding: '8px', textAlign: 'left' }}>Officer Name</th>
+                            <th style={{ padding: '8px', textAlign: 'left' }}>Name</th>
+                            <th style={{ padding: '8px', textAlign: 'left' }}>Designation</th>
                             <th style={{ padding: '8px', textAlign: 'right' }}>Year</th>
                             <th style={{ padding: '8px', textAlign: 'right' }}>Salary</th>
                             <th style={{ padding: '8px', textAlign: 'right' }}>Bonus</th>
@@ -262,6 +263,7 @@ function Dashboard() {
                               return (
                                 <tr key={oi} style={{ background: oi % 2 === 0 ? 'white' : '#f8fafc' }}>
                                   <td style={{ padding: 8, fontWeight: 500 }}>{o.OfficerName || '-'}</td>
+                                  <td style={{ padding: 8, color: '#64748b' }}>{o.Designation || '-'}</td>
                                   <td style={{ padding: 8, textAlign: 'right' }}>{o.FiscalYear || '-'}</td>
                                   <td style={{ padding: 8, textAlign: 'right' }}>{fmt(o.Salary)}</td>
                                   <td style={{ padding: 8, textAlign: 'right' }}>{fmt(o.Bonus)}</td>
@@ -306,24 +308,30 @@ function Dashboard() {
                       <div style={{ overflowX: 'auto' }}>
                         <table style={{ fontSize: 12, width: '100%' }}>
                           <thead><tr style={{ background: '#f8fafc' }}>
-                            <th style={{ padding: 8, textAlign: 'left' }}>Officer</th>
+                            <th style={{ padding: 8, textAlign: 'left' }}>Name</th>
+                            <th style={{ padding: 8, textAlign: 'left' }}>Designation</th>
                             <th style={{ padding: 8 }}>Year</th>
-                            {tab === 'equity' && <React.Fragment><th style={{ padding: 8 }}>Type</th><th style={{ padding: 8 }}>Securities</th><th style={{ padding: 8 }}>Ex Price</th><th style={{ padding: 8 }}>Market Value</th></React.Fragment>}
+                            {tab === 'equity' && <React.Fragment><th style={{ padding: 8 }}>Type</th><th style={{ padding: 8 }}>Grant Date</th><th style={{ padding: 8 }}>Securities</th><th style={{ padding: 8 }}>Ex Price</th><th style={{ padding: 8 }}>Expiration</th><th style={{ padding: 8 }}>Market Value</th><th style={{ padding: 8 }}>FYE Value</th><th style={{ padding: 8 }}>Ticker</th></React.Fragment>}
                             {tab === 'exercise' && <React.Fragment><th style={{ padding: 8 }}>Opt Shares</th><th style={{ padding: 8 }}>Opt Value</th><th style={{ padding: 8 }}>Stk Shares</th><th style={{ padding: 8 }}>Stk Value</th></React.Fragment>}
-                            {tab === 'pba' && <React.Fragment><th style={{ padding: 8 }}>Category</th><th style={{ padding: 8 }}>Threshold</th><th style={{ padding: 8 }}>Target</th><th style={{ padding: 8 }}>Maximum</th></React.Fragment>}
-                            {tab === 'dct' && <React.Fragment><th style={{ padding: 8 }}>Fees Earned</th><th style={{ padding: 8 }}>Stock Awards</th><th style={{ padding: 8 }}>Option Awards</th><th style={{ padding: 8 }}>All Other</th><th style={{ padding: 8 }}>Total</th></React.Fragment>}
+                            {tab === 'pba' && <React.Fragment><th style={{ padding: 8 }}>Category</th><th style={{ padding: 8 }}>Grant Date</th><th style={{ padding: 8 }}>Action Date</th><th style={{ padding: 8 }}>Threshold</th><th style={{ padding: 8 }}>Target</th><th style={{ padding: 8 }}>Maximum</th><th style={{ padding: 8 }}>Securities</th><th style={{ padding: 8 }}>Ex Price</th><th style={{ padding: 8 }}>Stock Price</th><th style={{ padding: 8 }}>GDFV</th></React.Fragment>}
+                            {tab === 'dct' && <React.Fragment><th style={{ padding: 8 }}>Fees Earned</th><th style={{ padding: 8 }}>Stock Awards</th><th style={{ padding: 8 }}>Option Awards</th><th style={{ padding: 8 }}>Non-Equity</th><th style={{ padding: 8 }}>Pension</th><th style={{ padding: 8 }}>All Other</th><th style={{ padding: 8 }}>Total</th></React.Fragment>}
                           </tr></thead>
                           <tbody>
                             {company.officers.map(function (o, oi) {
                               return (
                                 <tr key={oi} style={{ background: oi % 2 === 0 ? 'white' : '#f8fafc' }}>
                                   <td style={{ padding: 8, fontWeight: 500 }}>{o.OfficerName || o.Director_Name || '-'}</td>
+                                  <td style={{ padding: 8, color: '#64748b' }}>{tab === 'dct' ? '-' : (o.Designation || '-')}</td>
                                   <td style={{ padding: 8 }}>{o.FiscalYear || '-'}</td>
                                   {tab === 'equity' && <React.Fragment>
                                     <td style={{ padding: 8 }}>{o.Equity_Type || '-'}</td>
+                                    <td style={{ padding: 8 }}>{o.Grant_Date ? String(o.Grant_Date).slice(0,10) : '-'}</td>
                                     <td style={{ padding: 8 }}>{o.Number_Securities || '-'}</td>
                                     <td style={{ padding: 8 }}>{fmt(o.Exercise_Price)}</td>
+                                    <td style={{ padding: 8 }}>{o.Expiration_Date ? String(o.Expiration_Date).slice(0,10) : '-'}</td>
                                     <td style={{ padding: 8 }}>{fmt(o.Market_Value)}</td>
+                                    <td style={{ padding: 8 }}>{fmt(o.FYE_Value)}</td>
+                                    <td style={{ padding: 8 }}>{o.Tracking_Stock_Ticker || '-'}</td>
                                   </React.Fragment>}
                                   {tab === 'exercise' && <React.Fragment>
                                     <td style={{ padding: 8 }}>{o.Option_Shares_Acquired || '-'}</td>
@@ -333,14 +341,22 @@ function Dashboard() {
                                   </React.Fragment>}
                                   {tab === 'pba' && <React.Fragment>
                                     <td style={{ padding: 8 }}>{o.Award_Category || '-'}</td>
+                                    <td style={{ padding: 8 }}>{o.Grant_Date ? String(o.Grant_Date).slice(0,10) : '-'}</td>
+                                    <td style={{ padding: 8 }}>{o.Action_Date ? String(o.Action_Date).slice(0,10) : '-'}</td>
                                     <td style={{ padding: 8 }}>{fmt(o.Threshold)}</td>
                                     <td style={{ padding: 8 }}>{fmt(o.Target)}</td>
                                     <td style={{ padding: 8 }}>{fmt(o.Maximum)}</td>
+                                    <td style={{ padding: 8 }}>{o.Number_Securities || '-'}</td>
+                                    <td style={{ padding: 8 }}>{fmt(o.Exercise_Price)}</td>
+                                    <td style={{ padding: 8 }}>{fmt(o.Stock_Price)}</td>
+                                    <td style={{ padding: 8 }}>{fmt(o.Grant_Date_Fair_Value)}</td>
                                   </React.Fragment>}
                                   {tab === 'dct' && <React.Fragment>
                                     <td style={{ padding: 8 }}>{fmt(o.FeesEarnedorPaid)}</td>
                                     <td style={{ padding: 8 }}>{fmt(o.StockAwards)}</td>
                                     <td style={{ padding: 8 }}>{fmt(o.OptionAwards)}</td>
+                                    <td style={{ padding: 8 }}>{fmt(o.NonEquity)}</td>
+                                    <td style={{ padding: 8 }}>{fmt(o.PensionChange)}</td>
                                     <td style={{ padding: 8 }}>{fmt(o.AllotherComp)}</td>
                                     <td style={{ padding: 8 }}>{fmt(o.Total)}</td>
                                   </React.Fragment>}
