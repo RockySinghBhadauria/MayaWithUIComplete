@@ -17,26 +17,29 @@ import pandas as pd
 import config
 
 
-def get_metadata_dir(month=None):
-    """Get metadata dump directory for a given month.
+def get_metadata_dir(month=None, year=None):
+    """Get metadata dump directory: ``logs/<year>/sct_metadata_dump/<month>/`` (production layout).
 
     Args:
         month: Month number as string. Defaults to current month.
+        year:  Year string. Defaults to current year.
 
     Returns:
         Absolute path to the metadata directory (created if absent).
     """
-    month = month or str(date.today().month)
-    path = os.path.join(config.METADATA_DUMP_DIR, month)
+    today = date.today()
+    month = month or str(today.month)
+    year = year or str(today.year)
+    path = os.path.join(config.metadata_dump_dir(year), month)
     os.makedirs(path, exist_ok=True)
     return path
 
 
 def get_filing_dir(module_name, year=None, month=None, day=None):
-    """Get filing dump directory: ``data/filing_dump/{module}/{year}/{month}/{day}/``.
+    """Get filing dump directory: ``logs/<year>/filing_dump/<module>/<month>/<day>/`` (production layout).
 
     Args:
-        module_name: Parser module identifier (e.g. ``'SCT'``, ``'Equity'``).
+        module_name: Parser module identifier (e.g. ``'SCT_filings_dump'``, ``'Equity_filings_dump'``).
         year: Year string. Defaults to current year.
         month: Month string. Defaults to current month.
         day: Day string. Defaults to current day.
@@ -48,7 +51,7 @@ def get_filing_dir(module_name, year=None, month=None, day=None):
     year = year or str(today.year)
     month = month or str(today.month)
     day = day or str(today.day)
-    path = os.path.join(config.FILING_DUMP_DIR, module_name, year, month, day)
+    path = os.path.join(config.filing_dump_dir(year), module_name, month, day)
     os.makedirs(path, exist_ok=True)
     return path
 

@@ -28,12 +28,13 @@ def get_log_buffer():
 
 
 def setup_logging(level=None):
-    """Configure logging with file, console, and memory buffer handlers."""
+    """Configure logging with file (in logs/<year>/runs/), console, and memory buffer handlers."""
     level = level or config.LOG_LEVEL
-    os.makedirs(config.LOG_DIR, exist_ok=True)
+    runs_path = config.runs_dir()
+    os.makedirs(runs_path, exist_ok=True)
 
     log_file = os.path.join(
-        config.LOG_DIR,
+        runs_path,
         'maya_{}.log'.format(datetime.now().strftime('%Y%m%d'))
     )
 

@@ -113,58 +113,62 @@ Tell Claude:
 ## Project layout
 
 ```
-.
-├── .env.example              # template — copy to .env
-├── CLAUDE.md                 # this file
-├── app.py                    # FastAPI backend (port 5000)
-├── config.py                 # paths + SMTP + parsing thresholds (no DB config — that's in core/dbDetails.py)
-├── main.py                   # CLI entry: --init-db, --step, --from, --list-steps
-├── import_data.py            # one-off: seed Company table from production-project CSVs
-├── core/
-│   ├── dbDetails.py          # connection string from .env
-│   ├── database.py           # pyodbc wrapper
-│   ├── schema.py             # ONLY Pipeline_Runs DDL (UI-specific)
-│   ├── sp_gate.py            # SPGate.call_if_absent — the no-UPDATE rule enforcer
-│   ├── logging_config.py
-│   └── exceptions.py
-├── parsers/
-│   ├── base_parser.py        # ABC with lookup helpers
-│   ├── rss_parser.py         # step 1: EDGAR RSS → edgar_feed CSV
-│   ├── sct_parser.py         # step 2: HTML → L3 CSV
-│   ├── data_entry.py         # step 3: CSV → Maya_Parsing_Summary
-│   ├── sql_parser.py         # step 4: L3 CSV → wk_SummaryComp + Officer (SCT body)
-│   ├── equity_parser.py      # step 5
-│   ├── exercise_parser.py    # step 6
-│   ├── pba_parser.py         # step 7
-│   └── dct_parser.py         # step 8
-├── pipeline/
-│   ├── runner.py             # STEP_REGISTRY + DEFAULT_ORDER (see for the canonical step list)
-│   └── state.py              # Pipeline_Runs table writes
-├── mailer/
-│   ├── notifier.py           # daily HTML email of today's parsing summary
-│   └── templates.py
-├── ui/                       # (empty stubs — actual UI is in frontend/)
-├── frontend/                 # React 19 SPA (CRA)
-│   ├── package.json
-│   └── src/
-│       ├── App.js            # sidebar layout, 6 routes
-│       ├── api.js            # axios client
-│       └── pages/{Dashboard,Pipeline,Companies,Officers,ParsingSummary,Logs}.js
-├── utils/                    # csv_manager, html_fetcher, officer_matcher, table_extractor, etc.
-├── data/                     # metadata_dump/ + filing_dump/ (CSVs per company)
-├── logs/                     # one file per day
-└── docs/
-    ├── CHANGES.md            # every recent change explained
-    ├── SP_Behavior_Analysis.md   # per-SP analysis + gate rationale
-    └── SP_Definitions_raw.md     # sp_helptext dumps
+<repo-root>/
+├── CLAUDE.md                       # this file — AI handover guide
+├── README.md                       # quick start
+├── .gitignore
+│
+├── backend/                        # all Python code lives here
+│   ├── .env.example                # copy to backend/.env, fill in DB credentials
+│   ├── app.py                      # FastAPI server (port 5000)
+│   ├── main.py                     # CLI entry: --init-db, --step, --from, --list-steps
+│   ├── config.py                   # paths + SMTP + thresholds (NO DB config — that's in core/dbDetails.py)
+│   ├── requirements.txt
+│   ├── import_data.py              # one-off: seed Company table from production-project CSVs
+│   ├── core/
+│   │   ├── dbDetails.py            # connection string from .env
+│   │   ├── database.py             # pyodbc wrapper — SQL Server only
+│   │   ├── schema.py               # ONLY Pipeline_Runs DDL (UI-specific)
+│   │   ├── sp_gate.py              # SPGate.call_if_absent — no-UPDATE rule enforcer
+│   │   ├── logging_config.py
+│   │   └── exceptions.py
+│   ├── parsers/
+│   │   ├── base_parser.py
+│   │   ├── rss_parser.py           # step 1: EDGAR RSS → edgar_feed CSV
+│   │   ├── sct_parser.py           # step 2: HTML → L3 CSV
+│   │   ├── data_entry.py           # step 3: CSV → Maya_Parsing_Summary
+│   │   ├── sql_parser.py           # step 4: L3 CSV → wk_SummaryComp + Officer (SCT body)
+│   │   ├── equity_parser.py        # step 5
+│   │   ├── exercise_parser.py      # step 6
+│   │   ├── pba_parser.py           # step 7
+│   │   └── dct_parser.py           # step 8
+│   ├── pipeline/                   # runner.py + state.py
+│   ├── mailer/                     # notifier.py + templates.py
+│   ├── utils/                      # csv_manager, html_fetcher, officer_matcher, ...
+│   ├── docs/                       # CHANGES, SP_Behavior_Analysis, SP_Definitions_raw
+│   ├── data/                       # one-off seed CSVs (mssql_company_export, mssql_role_export)
+│   └── logs/<year>/                # production-style runtime artifacts (gitignored)
+│       ├── filing_dump/            # per-company L1/L2/L3 CSVs grouped by module/month/day
+│       ├── sct_metadata_dump/      # daily edgar_feed + module *_Parsed_transactions CSVs
+│       └── runs/                   # maya_YYYYMMDD.log flat files
+│
+└── frontend/                       # React 19 (CRA)
+    ├── package.json
+    ├── public/
+    └── src/
+        ├── App.js, api.js
+        └── pages/{Dashboard,Pipeline,Companies,Officers,ParsingSummary,Logs}.js
 ```
+
+**Production parity:** The `backend/logs/<year>/{filing_dump,sct_metadata_dump,runs}` layout mirrors the production Maya project exactly. Verification queries, log inspection, and `deletecompany.py`-style cleanup all use the same paths.
 
 ## Running the project locally
 
 ```bash
-# 1. Setup
+# 1. Setup backend
+cd backend
 cp .env.example .env
-# Edit .env — fill in DB_SERVER, DB_NAME, DB_USER, DB_PASSWORD
+# Edit backend/.env — fill in DB_SERVER, DB_NAME, DB_USER, DB_PASSWORD
 
 pip install -r requirements.txt
 
@@ -176,7 +180,7 @@ python app.py
 # → http://localhost:5000
 
 # 4. (in another shell) start frontend dev server
-cd frontend
+cd ../frontend
 npm install
 npm start
 # → http://localhost:3000 (proxies API calls to :5000)

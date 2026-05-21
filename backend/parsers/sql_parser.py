@@ -105,7 +105,8 @@ class SQLParser(BaseParser):
         base = os.path.join(os.path.dirname(os.path.dirname(get_filing_dir('SCT_filings_dump'))))
         all_l3 = glob.glob(os.path.join(base, '**', '*_cleaned_L3*'), recursive=True)
         if not all_l3:
-            all_l3 = glob.glob(os.path.join('data/filing_dump', '**', '*_cleaned_L3*'), recursive=True)
+            # Fallback for old layout — current production puts CSVs under logs/<year>/filing_dump/
+            all_l3 = glob.glob(os.path.join('logs', '**', 'filing_dump', '**', '*_cleaned_L3*'), recursive=True)
 
         l3_files = []
         for f in all_l3:

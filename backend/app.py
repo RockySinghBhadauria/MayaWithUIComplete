@@ -675,7 +675,8 @@ def get_logs(limit: int = 100):
 # Serve React Frontend (production)
 # ============================================================
 
-_frontend_build = os.path.join(os.path.dirname(__file__), "frontend", "build")
+# Backend lives in backend/; frontend build is at ../frontend/build relative to this file.
+_frontend_build = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend", "build"))
 
 # Mount static assets (JS, CSS)
 if os.path.isdir(os.path.join(_frontend_build, "static")):

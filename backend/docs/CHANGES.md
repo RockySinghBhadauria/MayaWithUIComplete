@@ -2,7 +2,42 @@
 
 This document tracks every change made to convert the UI fork from a standalone SQLite demo into a production-DB-connected pipeline that calls stored procedures.
 
-> **TL;DR:** Removed SQLite, made SQL Server the only backend, replaced raw INSERT/UPDATE with stored-procedure calls gated by the no-UPDATE rule (`core/sp_gate.py`), wired DCT, fixed status-string casing, hardened FastAPI hygiene.
+> **TL;DR:** Removed SQLite, made SQL Server the only backend, replaced raw INSERT/UPDATE with stored-procedure calls gated by the no-UPDATE rule (`core/sp_gate.py`), wired DCT, fixed status-string casing, hardened FastAPI hygiene, reorganized into `backend/` + `frontend/` with production-style `logs/<year>/` layout.
+
+---
+
+## Phase 0 — Repository reorganization (backend/ + frontend/)
+
+All Python code moved into `backend/`. Layout now mirrors a standard monorepo:
+
+```
+<repo>/
+├── backend/         # all Python (app.py, config.py, core/, parsers/, pipeline/, mailer/, utils/, docs/, data/)
+│   └── logs/<year>/{filing_dump, sct_metadata_dump, runs}    # production-style runtime artifacts
+├── frontend/        # React 19 (unchanged)
+├── CLAUDE.md, README.md, .gitignore
+```
+
+### Path changes
+| Old | New |
+|-----|-----|
+| `<repo>/app.py` etc. | `<repo>/backend/app.py` etc. |
+| `<repo>/data/metadata_dump/<month>/` | `<repo>/backend/logs/<year>/sct_metadata_dump/<month>/` |
+| `<repo>/data/filing_dump/SCT_filings_dump/<month>/<day>/` | `<repo>/backend/logs/<year>/filing_dump/SCT_filings_dump/<month>/<day>/` |
+| `<repo>/logs/maya_YYYYMMDD.log` | `<repo>/backend/logs/<year>/runs/maya_YYYYMMDD.log` |
+| `<repo>/data/mssql_*_export.csv` | `<repo>/backend/data/mssql_*_export.csv` (one-off seed CSVs only) |
+
+### Why this layout
+- Matches the production Maya project's `logs/<year>/{filing_dump, sct_metadata_dump, runs}` structure exactly.
+- Same verification queries / `deletecompany.py` patterns / log inspection habits transfer.
+- Clean monorepo boundary — frontend devs don't need to navigate Python folders, backend devs don't trip over React build artifacts.
+
+### Code changes for the new layout
+- `backend/config.py` — replaced flat `METADATA_DUMP_DIR` / `FILING_DUMP_DIR` constants with year-aware `metadata_dump_dir(year)`, `filing_dump_dir(year)`, `runs_dir(year)` functions. Back-compat aliases kept for callers that still import the constants.
+- `backend/core/logging_config.py` — log files now land in `logs/<year>/runs/`.
+- `backend/utils/csv_manager.py` — `get_metadata_dir()` and `get_filing_dir()` use the new year-partitioned helpers.
+- `backend/app.py` — frontend build path now resolves to `../frontend/build` (one level up from `backend/`).
+- `backend/.gitignore` — `logs/` and `data/*.csv` rules updated for the new layout.
 
 ---
 
