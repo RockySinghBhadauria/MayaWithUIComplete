@@ -38,18 +38,36 @@ class PipelineState(object):
             pass  # Don't let progress updates break the pipeline
 
     def complete_step(self, step_name, result=None):
-        """Record that a pipeline step completed successfully."""
+        """Record that a pipeline step completed successfully.
+
+        Counter semantics — important:
+          - companies_failed counts REAL errors (SP raised, parser crashed).
+          - 'No qualifying table found' is NOT a failure — it's a normal
+            outcome for filings that genuinely don't have that section
+            (small companies, investment funds). It used to be lumped into
+            companies_failed, which made every successful run look broken.
+            Those are now stored in error_message so the UI can show them
+            separately if desired, but not counted as failures.
+        """
         now = datetime.now().isoformat()
         result = result or {}
+        # 'failed' means SP/parser exception. 'no_table_found' is normal.
+        real_failed = result.get('failed', 0)
+        no_table = result.get('no_table_found', 0)
+        info_msg = None
+        if no_table:
+            info_msg = "{} compan(y/ies) had no qualifying table (normal for funds / small companies)".format(no_table)
         self.db.execute(
             """UPDATE Pipeline_Runs
                SET status='completed', completed_at=?,
-                   companies_processed=?, companies_parsed=?, companies_failed=?
+                   companies_processed=?, companies_parsed=?, companies_failed=?,
+                   error_message=?
                WHERE run_group=? AND step_name=? AND status='running'""",
             [now,
              result.get('companies_processed', result.get('companies_found', result.get('officers_inserted', 0))),
              result.get('parsed', result.get('companies_saved', result.get('inserted', result.get('officers_inserted', 0)))),
-             result.get('failed', result.get('no_table_found', 0)),
+             real_failed,
+             info_msg,
              self.run_group, step_name]
         )
         self.db.commit()

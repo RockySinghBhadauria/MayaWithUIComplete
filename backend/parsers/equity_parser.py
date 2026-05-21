@@ -171,6 +171,36 @@ def _safe_equity_value(value):
     return result
 
 
+def _safe_date(value):
+    """Parse a cell value into a datetime object or None.
+
+    Production sp_Outstanding_Equity_Awards_IU_MAYA declares @Grant_Date /
+    @Expiration_Date as DATETIME. Passing money strings ('$30,101'), percent
+    strings, or junk crashes the SP with
+    'Error converting data type nvarchar to datetime'. Return None for
+    anything that isn't a parseable date so the SP stores NULL instead.
+    """
+    import re as _re
+    from datetime import datetime as _dt
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return None
+    val = str(value).strip()
+    if not val or val.lower() in ('nan', 'none', ''):
+        return None
+    # Reject money / percent / pure-number cells outright
+    if _re.match(r'^[\$\(\-]', val) or _re.search(r'[%]', val):
+        return None
+    if _re.match(r'^[\d,]+(\.\d+)?$', val):
+        return None
+    for fmt in ('%m/%d/%Y', '%m/%d/%y', '%Y-%m-%d', '%B %d, %Y',
+                '%b %d, %Y', '%d-%b-%Y', '%d-%b-%y'):
+        try:
+            return _dt.strptime(val, fmt)
+        except (ValueError, TypeError):
+            continue
+    return None
+
+
 class EquityParser(BaseParser):
     """Parse Outstanding Equity Holdings tables from SEC filing HTML.
 
@@ -241,7 +271,7 @@ class EquityParser(BaseParser):
                 company_id = comp_row['Company_ID'] if comp_row else 0
 
                 result['companies_processed'] += 1
-                self.report_progress(processed=result['companies_processed'], parsed=result.get('parsed', 0), failed=result.get('no_table_found', 0))
+                self.report_progress(processed=result['companies_processed'], parsed=result.get('parsed', 0), failed=result.get('failed', 0))
 
                 # 2a. Check if equity data already exists
                 if self._equity_already_parsed(company_id, fiscal_year):
@@ -556,8 +586,8 @@ class EquityParser(BaseParser):
                 from core.sp_gate import SPGate, STATUS_PARSED
                 if not hasattr(self, '_sp_gate'):
                     self._sp_gate = SPGate(self.db, self.logger)
-                expiration_clean = expiration if expiration and expiration != 'nan' else None
-                grant_date_clean = grant_date if grant_date and grant_date != 'nan' else None
+                expiration_clean = _safe_date(expiration)
+                grant_date_clean = _safe_date(grant_date)
                 num_securities = exercisable + unexercisable + unvested_shares
                 status = self._sp_gate.call_if_absent(
                     exists_sql=(

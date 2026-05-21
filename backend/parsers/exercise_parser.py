@@ -209,7 +209,7 @@ class ExerciseParser(BaseParser):
                 company_id = comp_row['Company_ID'] if comp_row else 0
 
                 result['companies_processed'] += 1
-                self.report_progress(processed=result['companies_processed'], parsed=result.get('parsed', 0), failed=result.get('no_table_found', 0))
+                self.report_progress(processed=result['companies_processed'], parsed=result.get('parsed', 0), failed=result.get('failed', 0))
 
                 # 2a. Check if exercise data already exists
                 if self._exercise_already_parsed(company_id, fiscal_year):
