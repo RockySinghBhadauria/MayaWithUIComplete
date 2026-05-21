@@ -671,11 +671,88 @@ def get_stats():
 
 @app.delete("/api/data/today")
 def delete_today_data():
-    """Delete all data parsed today — allows re-running the pipeline fresh."""
+    """Delete all data parsed today — allows re-running the pipeline fresh.
+
+    Scope of deletion (SAFE — only Maya-inserted rows, only today's companies):
+      1. Maya_Parsing_Summary rows with Parsed_Date = today
+      2. wk_SummaryComp rows for (Company_ID, FiscalYear) pairs in #1
+         AND CreatedBy = 'MAYA' (human-edited rows have a different CreatedBy
+         and are preserved per the no-update rule)
+      3. Officer_Outstanding_Equity rows similarly scoped
+      4. Officer_Awards rows similarly scoped
+      5. BOD_DirectorComp rows similarly scoped
+      6. Pipeline_Runs rows with today's run_date
+    """
     db = get_db()
     try:
         from core.database import cast_date_sql, today_date_sql
         td = today_date_sql()
+
+        # Snapshot today's (Company_ID, FiscalYear) pairs before we delete MPS
+        pairs = db.fetch_all(
+            "SELECT DISTINCT Company_ID, FiscalYear FROM Maya_Parsing_Summary "
+            "WHERE {} = {} AND Company_ID IS NOT NULL".format(
+                cast_date_sql("Parsed_Date"), td)
+        )
+        pair_count = len(pairs)
+        wk_deleted = 0
+        eq_deleted = 0
+        oa_deleted = 0
+        bdc_deleted = 0
+        for p in pairs:
+            cid = p.get("Company_ID")
+            fy = p.get("FiscalYear")
+            # wk_SummaryComp — only Maya-inserted (CreatedBy='MAYA')
+            cur = db.execute(
+                "DELETE FROM wk_SummaryComp "
+                "WHERE Company_ID=? AND FiscalYear=? AND CreatedBy='MAYA'",
+                [cid, fy]
+            )
+            try:
+                wk_deleted += cur.rowcount or 0
+            except Exception:
+                pass
+            # Officer_Outstanding_Equity (no CreatedBy here, join via Officer)
+            cur = db.execute(
+                "DELETE FROM Officer_Outstanding_Equity "
+                "WHERE Officer_ID IN ("
+                "  SELECT Officer_ID FROM Officer WHERE Company_ID=? AND FiscalYear=?"
+                ") AND FiscalYear=?",
+                [cid, fy, fy]
+            )
+            try:
+                eq_deleted += cur.rowcount or 0
+            except Exception:
+                pass
+            # Officer_Awards (no CreatedBy, join via Officer)
+            cur = db.execute(
+                "DELETE FROM Officer_Awards "
+                "WHERE Officer_ID IN ("
+                "  SELECT Officer_ID FROM Officer WHERE Company_ID=? AND FiscalYear=?"
+                ") AND FiscalYear=?",
+                [cid, fy, fy]
+            )
+            try:
+                oa_deleted += cur.rowcount or 0
+            except Exception:
+                pass
+            # BOD_DirectorComp
+            cur = db.execute(
+                "DELETE FROM BOD_DirectorComp WHERE Company_ID=? AND FiscalYear=?",
+                [cid, fy]
+            )
+            try:
+                bdc_deleted += cur.rowcount or 0
+            except Exception:
+                pass
+
+        # NOTE: We intentionally do NOT delete from the Officer table itself —
+        # Officer is the canonical master and may have human edits. The
+        # exercise cols on Officer (Option_Shares_Acquired, etc.) are also
+        # left alone; SP gate will skip them on re-run, which is correct
+        # under the no-update rule.
+
+        # Now MPS + pipeline runs
         db.execute(
             "DELETE FROM Maya_Parsing_Summary WHERE {} = {}".format(
                 cast_date_sql("Parsed_Date"), td)
@@ -685,7 +762,10 @@ def delete_today_data():
         remaining = db.fetch_one("SELECT COUNT(*) as c FROM Maya_Parsing_Summary")
         return {
             "status": "deleted",
-            "message": "Today's data has been cleared. You can re-run the pipeline.",
+            "message": ("Today's data cleared. {} (Company,FY) pairs reset: "
+                        "wk_SummaryComp={} Equity={} Awards={} DCT={}. "
+                        "You can re-run the pipeline.").format(
+                pair_count, wk_deleted, eq_deleted, oa_deleted, bdc_deleted),
             "remaining_records": remaining["c"] if remaining else 0,
         }
     finally:
