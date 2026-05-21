@@ -488,20 +488,13 @@ class ExerciseParser(BaseParser):
                         self.db, matched_name, company_id, fiscal_year,
                     )
 
+            # No-update rule: Officer table is owned by SCT — Exercise never auto-inserts.
+            # Skip rows whose officer wasn't previously created by sql_parser.
             if officer_id is None:
-                try:
-                    self.db.execute(
-                        "INSERT INTO Officer (OfficerName, Company_ID, FiscalYear) VALUES (?,?,?)",
-                        [officer_name_raw, company_id, fiscal_year]
-                    )
-                    self.db.commit()
-                    row_result = self.db.fetch_one(
-                        "SELECT Officer_ID FROM Officer WHERE Company_ID=? AND FiscalYear=? AND OfficerName=?",
-                        [company_id, fiscal_year, officer_name_raw]
-                    )
-                    officer_id = row_result['Officer_ID'] if row_result else None
-                except Exception:
-                    pass
+                self.logger.info(
+                    "Exercise: officer not found in Officer table (Company_ID=%s FY=%s name=%r) — skipping",
+                    company_id, fiscal_year, officer_name_raw
+                )
 
             if officer_id is None:
                 self.logger.debug('Could not create officer for: %s', officer_name_raw)

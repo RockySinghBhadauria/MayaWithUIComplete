@@ -314,42 +314,29 @@ class DCTParser(BaseParser):
         return row is not None
 
     def _get_filing_link(self, edgar_df, sct_row):
-        """Extract the filing URL for this company from the edgar_feed.
+        """Extract the filing URL for this company.
 
-        Parameters
-        ----------
-        edgar_df : pd.DataFrame
-        sct_row : pd.Series
-
-        Returns
-        -------
-        str or None
+        The SCT_Parsed_transactions CSV already contains the Link column for each
+        company (written by sct_parser), so prefer that. Fall back to edgar_df
+        matched on CompanyName if the SCT row's Link is somehow blank.
         """
-        company_id = int(sct_row.get('Company_ID', 0))
+        # Primary: SCT row already has the link
+        for col in ('Link', 'link', 'Filing_Link', 'filing_link', 'URL', 'url'):
+            if col in sct_row.index:
+                v = sct_row.get(col)
+                if v and str(v).lower() not in ('nan', 'none', ''):
+                    return str(v)
 
-        # Try matching on Company_ID
-        if 'Company_ID' in edgar_df.columns:
-            match = edgar_df[edgar_df['Company_ID'] == company_id]
+        # Fallback: match on CompanyName in edgar_df
+        company_name = str(sct_row.get('CompanyName', '')).strip()
+        if company_name and 'CompanyName' in edgar_df.columns:
+            match = edgar_df[edgar_df['CompanyName'].astype(str).str.strip() == company_name]
             if not match.empty:
-                for col_name in ['Link', 'link', 'Filing_Link', 'filing_link',
-                                 'URL', 'url']:
-                    if col_name in match.columns:
-                        link = str(match.iloc[0][col_name])
-                        if link and link != 'nan':
-                            return link
-
-        # Fallback: try matching on CIK
-        cik = sct_row.get('CIK', None)
-        if cik is not None and 'CIK' in edgar_df.columns:
-            match = edgar_df[edgar_df['CIK'] == int(cik)]
-            if not match.empty:
-                for col_name in ['Link', 'link', 'Filing_Link', 'filing_link',
-                                 'URL', 'url']:
-                    if col_name in match.columns:
-                        link = str(match.iloc[0][col_name])
-                        if link and link != 'nan':
-                            return link
-
+                for col in ('Link', 'link', 'Filing_Link', 'filing_link', 'URL', 'url'):
+                    if col in match.columns:
+                        v = match.iloc[0][col]
+                        if v and str(v).lower() not in ('nan', 'none', ''):
+                            return str(v)
         return None
 
     # ------------------------------------------------------------------

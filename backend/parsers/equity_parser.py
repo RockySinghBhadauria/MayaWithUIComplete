@@ -513,23 +513,15 @@ class EquityParser(BaseParser):
                         self.db, matched_name, company_id, fiscal_year,
                     )
 
-            # If no match, create the officer
+            # No-update rule: Officer table is owned by SCT (sql_parser.py via sp_wk_SummaryComp_*).
+            # Equity must NOT auto-insert into Officer — that would either (a) violate
+            # Role_ID1 NOT NULL constraint or (b) create a phantom officer without title/role
+            # that humans then can't edit. If the officer doesn't exist yet, skip the row.
             if officer_id is None:
-                try:
-                    self.db.execute(
-                        "INSERT INTO Officer (OfficerName, Company_ID, FiscalYear) VALUES (?,?,?)",
-                        [officer_name_raw, company_id, fiscal_year]
-                    )
-                    self.db.commit()
-                    row_result = self.db.fetch_one(
-                        "SELECT Officer_ID FROM Officer WHERE Company_ID=? AND FiscalYear=? AND OfficerName=?",
-                        [company_id, fiscal_year, officer_name_raw]
-                    )
-                    officer_id = row_result['Officer_ID'] if row_result else None
-                except Exception:
-                    pass
-
-            if officer_id is None:
+                self.logger.info(
+                    "Equity: officer not found in Officer table (Company_ID=%s FY=%s name=%r) — skipping (SCT must populate Officer first)",
+                    company_id, fiscal_year, officer_name_raw
+                )
                 continue
 
             # Insert equity data directly

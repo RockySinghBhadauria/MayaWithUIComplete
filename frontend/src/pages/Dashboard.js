@@ -113,6 +113,7 @@ function Dashboard() {
             { id: 'equity', label: 'Equity' },
             { id: 'exercise', label: 'Exercise' },
             { id: 'pba', label: 'PBA' },
+            { id: 'dct', label: 'DCT' },
           ].map(function (t) {
             return (
               <button key={t.id} onClick={function () { loadTab(t.id); }}
@@ -285,7 +286,7 @@ function Dashboard() {
         )}
 
         {/* EQUITY / EXERCISE / PBA TABS */}
-        {(tab === 'equity' || tab === 'exercise' || tab === 'pba') && !dataLoading && data && (
+        {(tab === 'equity' || tab === 'exercise' || tab === 'pba' || tab === 'dct') && !dataLoading && data && (
           <div>
             {data.grouped && data.grouped.length > 0 ? (
               <div>
@@ -307,20 +308,22 @@ function Dashboard() {
                           <thead><tr style={{ background: '#f8fafc' }}>
                             <th style={{ padding: 8, textAlign: 'left' }}>Officer</th>
                             <th style={{ padding: 8 }}>Year</th>
-                            {tab === 'equity' && <React.Fragment><th style={{ padding: 8 }}>Type</th><th style={{ padding: 8 }}>Securities</th><th style={{ padding: 8 }}>Price</th></React.Fragment>}
+                            {tab === 'equity' && <React.Fragment><th style={{ padding: 8 }}>Type</th><th style={{ padding: 8 }}>Securities</th><th style={{ padding: 8 }}>Ex Price</th><th style={{ padding: 8 }}>Market Value</th></React.Fragment>}
                             {tab === 'exercise' && <React.Fragment><th style={{ padding: 8 }}>Opt Shares</th><th style={{ padding: 8 }}>Opt Value</th><th style={{ padding: 8 }}>Stk Shares</th><th style={{ padding: 8 }}>Stk Value</th></React.Fragment>}
-                            {tab === 'pba' && <React.Fragment><th style={{ padding: 8 }}>Category</th><th style={{ padding: 8 }}>Target</th><th style={{ padding: 8 }}>Maximum</th></React.Fragment>}
+                            {tab === 'pba' && <React.Fragment><th style={{ padding: 8 }}>Category</th><th style={{ padding: 8 }}>Threshold</th><th style={{ padding: 8 }}>Target</th><th style={{ padding: 8 }}>Maximum</th></React.Fragment>}
+                            {tab === 'dct' && <React.Fragment><th style={{ padding: 8 }}>Fees Earned</th><th style={{ padding: 8 }}>Stock Awards</th><th style={{ padding: 8 }}>Option Awards</th><th style={{ padding: 8 }}>All Other</th><th style={{ padding: 8 }}>Total</th></React.Fragment>}
                           </tr></thead>
                           <tbody>
                             {company.officers.map(function (o, oi) {
                               return (
                                 <tr key={oi} style={{ background: oi % 2 === 0 ? 'white' : '#f8fafc' }}>
-                                  <td style={{ padding: 8, fontWeight: 500 }}>{o.OfficerName || '-'}</td>
+                                  <td style={{ padding: 8, fontWeight: 500 }}>{o.OfficerName || o.Director_Name || '-'}</td>
                                   <td style={{ padding: 8 }}>{o.FiscalYear || '-'}</td>
                                   {tab === 'equity' && <React.Fragment>
                                     <td style={{ padding: 8 }}>{o.Equity_Type || '-'}</td>
-                                    <td style={{ padding: 8 }}>{o.Number_Securities_Exercisable_Options || '-'}</td>
+                                    <td style={{ padding: 8 }}>{o.Number_Securities || '-'}</td>
                                     <td style={{ padding: 8 }}>{fmt(o.Exercise_Price)}</td>
+                                    <td style={{ padding: 8 }}>{fmt(o.Market_Value)}</td>
                                   </React.Fragment>}
                                   {tab === 'exercise' && <React.Fragment>
                                     <td style={{ padding: 8 }}>{o.Option_Shares_Acquired || '-'}</td>
@@ -330,8 +333,16 @@ function Dashboard() {
                                   </React.Fragment>}
                                   {tab === 'pba' && <React.Fragment>
                                     <td style={{ padding: 8 }}>{o.Award_Category || '-'}</td>
-                                    <td style={{ padding: 8 }}>{fmt(o.NonEquity_Target)}</td>
-                                    <td style={{ padding: 8 }}>{fmt(o.NonEquity_Maximum)}</td>
+                                    <td style={{ padding: 8 }}>{fmt(o.Threshold)}</td>
+                                    <td style={{ padding: 8 }}>{fmt(o.Target)}</td>
+                                    <td style={{ padding: 8 }}>{fmt(o.Maximum)}</td>
+                                  </React.Fragment>}
+                                  {tab === 'dct' && <React.Fragment>
+                                    <td style={{ padding: 8 }}>{fmt(o.FeesEarnedorPaid)}</td>
+                                    <td style={{ padding: 8 }}>{fmt(o.StockAwards)}</td>
+                                    <td style={{ padding: 8 }}>{fmt(o.OptionAwards)}</td>
+                                    <td style={{ padding: 8 }}>{fmt(o.AllotherComp)}</td>
+                                    <td style={{ padding: 8 }}>{fmt(o.Total)}</td>
                                   </React.Fragment>}
                                 </tr>
                               );

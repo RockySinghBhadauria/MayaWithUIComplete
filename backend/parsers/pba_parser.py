@@ -213,13 +213,32 @@ def _safe_value(value):
 
 
 def _safe_date(value):
-    """Convert a cell value to a date string, returning empty string on failure."""
+    """Parse a cell value into a datetime object (SQL Server datetime-compatible) or None.
+
+    Production sp_wk_PlanBasedAward_U_MAYA declares @GrantDate / @ActionDate as DATETIME —
+    passing a non-date string ('$100,000', '10%', etc.) errors out with
+    'Error converting data type nvarchar to datetime'. We return None for anything that
+    isn't parseable as a date so the SP just stores NULL.
+    """
+    import re as _re
+    from datetime import datetime as _dt
     if value is None or (isinstance(value, float) and np.isnan(value)):
-        return ''
-    val = clean_text(str(value))
-    if not val or val == 'nan':
-        return ''
-    return val
+        return None
+    val = clean_text(str(value)).strip()
+    if not val or val.lower() in ('nan', 'none', ''):
+        return None
+    # If the cell starts with $, %, parentheses, or pure digits/commas → it's a money/number, not a date
+    if _re.match(r'^[\$\(\-]', val) or _re.search(r'[%]', val):
+        return None
+    if _re.match(r'^[\d,]+(\.\d+)?$', val):
+        return None
+    # Try a handful of common SEC date formats
+    for fmt in ('%m/%d/%Y', '%m/%d/%y', '%Y-%m-%d', '%B %d, %Y', '%b %d, %Y', '%d-%b-%Y', '%d-%b-%y'):
+        try:
+            return _dt.strptime(val, fmt)
+        except (ValueError, TypeError):
+            continue
+    return None
 
 
 def _extract_person_names_spacy(text):
@@ -669,22 +688,12 @@ class PBAParser(BaseParser):
                                 self.db, matched_name, company_id, fiscal_year,
                             )
 
-                    # If no match, create the officer
+                    # No-update rule: Officer table is owned by SCT — PBA never auto-inserts.
                     if current_officer_id is None:
-                        current_officer_name = officer_name_raw
-                        try:
-                            self.db.execute(
-                                "INSERT INTO Officer (OfficerName, Company_ID, FiscalYear) VALUES (?,?,?)",
-                                [officer_name_raw, company_id, fiscal_year]
-                            )
-                            self.db.commit()
-                            row_result = self.db.fetch_one(
-                                "SELECT Officer_ID FROM Officer WHERE Company_ID=? AND FiscalYear=? AND OfficerName=?",
-                                [company_id, fiscal_year, officer_name_raw]
-                            )
-                            current_officer_id = row_result['Officer_ID'] if row_result else None
-                        except Exception:
-                            pass
+                        self.logger.info(
+                            "PBA: officer not found in Officer table (Company_ID=%s FY=%s name=%r) — skipping",
+                            company_id, fiscal_year, officer_name_raw
+                        )
 
             if current_officer_id is None:
                 continue
